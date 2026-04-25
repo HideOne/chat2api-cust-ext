@@ -134,6 +134,12 @@ export const TOKEN_EXTRACTION_CONFIGS: Record<ProviderType, TokenExtractionConfi
     loginUrl: 'https://chat.qwen.ai',
     tokenSources: [
       {
+        type: 'networkHeader',
+        key: 'token',
+        urlPattern: '*://*.qwen.ai/*',
+        extractPattern: '^Bearer\\s+(.+)$',
+      },
+      {
         type: 'localStorage',
         key: 'token',
       },
