@@ -15,6 +15,7 @@ export default defineConfig({
           'eventsource-parser',
           'js-sha3',
           'mime-types',
+          'form-data',
           'zstd-codec',
           'electron-store',
           'electron-updater'
