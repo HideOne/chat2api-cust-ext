@@ -211,6 +211,8 @@ export interface AppConfig {
   managementApi: ManagementApiConfig
   /** Context management configuration */
   contextManagement: ContextManagementConfig
+  /** Whether to save forwarded request/response data to local files */
+  enableForwardRequestLog: boolean
 }
 
 /**
@@ -724,6 +726,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   toolPromptConfig: DEFAULT_TOOL_PROMPT_CONFIG,
   managementApi: DEFAULT_MANAGEMENT_API_CONFIG,
   contextManagement: DEFAULT_CONTEXT_MANAGEMENT_CONFIG,
+  enableForwardRequestLog: false,
 }
 
 /**

@@ -101,6 +101,8 @@ export interface AppConfig {
   oauthProxyMode: 'system' | 'none'
   sessionConfig: SessionConfig
   toolPromptConfig: ToolPromptConfig
+  /** Whether to save forwarded request/response data to local files */
+  enableForwardRequestLog?: boolean
 }
 
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error'

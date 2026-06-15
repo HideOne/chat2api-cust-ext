@@ -93,6 +93,7 @@ export const IpcChannels = {
   APP_SHOW_WINDOW: 'app:showWindow',
   APP_HIDE_WINDOW: 'app:hideWindow',
   APP_OPEN_EXTERNAL: 'app:openExternal',
+  APP_OPEN_FORWARD_LOGS_FOLDER: 'app:openForwardLogsFolder',
 
   PROMPTS_GET_ALL: 'prompts:getAll',
   PROMPTS_GET_BUILTIN: 'prompts:getBuiltin',
