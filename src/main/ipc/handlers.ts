@@ -15,7 +15,6 @@ import { TrayManager } from '../tray/TrayManager'
 import { ConfigManager } from '../store/config'
 import { generateManagementSecret } from '../proxy/middleware/managementAuth'
 import { UpdaterManager } from '../updater'
-import { forwardRequestLogger } from '../proxy/utils/forwardRequestLogger'
 import type { Provider, Account, ProxyStatus, ProviderCheckResult, OAuthResult, AuthType, CredentialField, LogLevel, LogEntry, ProviderVendor, AppConfig } from '../../shared/types'
 import type { SystemPrompt, SessionConfig, SessionRecord, ManagementApiConfig } from '../store/types'
 import type { ProviderType } from '../oauth/types'
@@ -883,19 +882,6 @@ export async function registerIpcHandlers(mainWindow: BrowserWindow | null): Pro
       console.error('[APP_OPEN_EXTERNAL] Error:', error)
       throw error
     }
-  })
-
-  ipcMain.handle(IpcChannels.APP_OPEN_FORWARD_LOGS_FOLDER, async (): Promise<string> => {
-    const logDir = forwardRequestLogger.getLogDir()
-    const { mkdirSync, existsSync } = await import('fs')
-    if (!existsSync(logDir)) {
-      mkdirSync(logDir, { recursive: true })
-    }
-    const result = await shell.openPath(logDir)
-    if (result) {
-      throw new Error(result)
-    }
-    return logDir
   })
 
   // ==================== System Prompts Handlers ====================

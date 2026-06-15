@@ -1,13 +1,12 @@
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Switch } from '@/components/ui/switch'
 import { useSettingsStore, LogLevel } from '@/stores/settingsStore'
 import { useToast } from '@/hooks/use-toast'
-import { Database, Download, Upload, Trash2, RotateCcw, AlertTriangle, FolderOpen } from 'lucide-react'
+import { Database, Download, Upload, Trash2, RotateCcw, AlertTriangle } from 'lucide-react'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import {
   Dialog,
@@ -21,30 +20,12 @@ import {
 
 export function DataManagement() {
   const { t } = useTranslation()
-  const { logLevel, setLogLevel, logRetentionDays, setLogRetentionDays, maxLogs, setMaxLogs, config, updateConfig, fetchConfig } = useSettingsStore()
+  const { logLevel, setLogLevel, logRetentionDays, setLogRetentionDays, maxLogs, setMaxLogs } = useSettingsStore()
   const { toast } = useToast()
   const [isExporting, setIsExporting] = useState(false)
   const [isImporting, setIsImporting] = useState(false)
   const [isClearing, setIsClearing] = useState(false)
   const [isResetting, setIsResetting] = useState(false)
-
-  useEffect(() => {
-    fetchConfig()
-  }, [fetchConfig])
-
-  const enableForwardRequestLog = config?.enableForwardRequestLog ?? false
-
-  const handleOpenForwardLogsFolder = async () => {
-    try {
-      await window.electronAPI?.app?.openForwardLogsFolder()
-    } catch {
-      toast({
-        title: t('common.error'),
-        description: t('settings.openForwardLogsFolderFailed'),
-        variant: 'destructive',
-      })
-    }
-  }
 
   const handleExportConfig = async () => {
     setIsExporting(true)
@@ -165,30 +146,9 @@ export function DataManagement() {
             </div>
             {t('settings.logSettings')}
           </CardTitle>
-          <CardDescription>{t('settings.logSettingsDesc')}</CardDescription>
+          <CardDescription>{t('settings.logRetentionDays')}</CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
-          <div className="flex items-center justify-between p-3 rounded-xl bg-[var(--glass-bg)] border border-[var(--glass-border)]">
-            <div className="space-y-0.5">
-              <Label htmlFor="enable-forward-request-log">{t('settings.enableForwardRequestLog')}</Label>
-              <p className="text-xs text-muted-foreground">{t('settings.enableForwardRequestLogHelp')}</p>
-            </div>
-            <Switch
-              id="enable-forward-request-log"
-              checked={enableForwardRequestLog}
-              onCheckedChange={(checked) => updateConfig({ enableForwardRequestLog: checked })}
-            />
-          </div>
-          {enableForwardRequestLog && (
-            <Button
-              variant="outline"
-              onClick={handleOpenForwardLogsFolder}
-              className="flex items-center gap-2"
-            >
-              <FolderOpen className="h-4 w-4" />
-              {t('settings.openForwardLogsFolder')}
-            </Button>
-          )}
           <div className="grid gap-4 md:grid-cols-3">
             <div className="space-y-2 p-3 rounded-xl bg-[var(--glass-bg)] border border-[var(--glass-border)]">
               <Label htmlFor="log-level">{t('settings.logLevel')}</Label>

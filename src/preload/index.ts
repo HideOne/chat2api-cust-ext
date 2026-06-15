@@ -426,9 +426,6 @@ const appAPI = {
   openExternal: (url: string): Promise<void> =>
     ipcRenderer.invoke(IpcChannels.APP_OPEN_EXTERNAL, url),
 
-  openForwardLogsFolder: (): Promise<string> =>
-    ipcRenderer.invoke(IpcChannels.APP_OPEN_FORWARD_LOGS_FOLDER),
-
   checkUpdate: (): Promise<{ hasUpdate: boolean; currentVersion: string; latestVersion: string; releaseUrl?: string; error?: string }> =>
     ipcRenderer.invoke(IpcChannels.APP_CHECK_UPDATE),
 

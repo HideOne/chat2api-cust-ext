@@ -66,6 +66,18 @@ interface GLMMessage {
   tool_calls?: any[]
 }
 
+interface GLMChatUploadFile {
+  file_id: string
+  file_url: string
+  file_name: string
+  file_size: number
+  file_type?: string
+  cover_images?: string[]
+  url?: string
+  width?: number
+  height?: number
+}
+
 interface ChatCompletionRequest {
   model: string
   originalModel?: string
@@ -257,6 +269,60 @@ export class GLMAdapter {
   }
 
   /**
+   * Upload prompt text as a chat file.
+   * GLM web chat truncates long plain text input, while uploaded txt files can be
+   * passed to /backend-api/assistant/stream as file content.
+   */
+  private async uploadTextAsChatFile(text: string, assistantId: string): Promise<GLMChatUploadFile> {
+    const token = await this.acquireToken()
+    const sign = generateSign()
+    const filename = `chat2api-message-${Date.now()}.txt`
+    const fileData = Buffer.from(text, 'utf8')
+    const formData = new FormData()
+
+    formData.append('file', fileData, {
+      filename,
+      contentType: 'text/plain',
+    })
+    formData.append('from', 'chat')
+    formData.append('assistant_id', assistantId)
+
+    const cookie = this.account.credentials.cookie
+    const response = await axios.post(
+      `${GLM_API_BASE}/productivity-api/file/chat_upload`,
+      formData,
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          ...FAKE_HEADERS,
+          Accept: 'application/json, text/plain, */*',
+          Referer: 'https://chatglm.cn/main/alltoolsdetail',
+          'X-App-Fr': 'default',
+          'X-Device-Id': uuid(),
+          'X-Request-Id': uuid(),
+          'X-Sign': sign.sign,
+          'X-Timestamp': sign.timestamp,
+          'X-Nonce': sign.nonce,
+          ...(cookie ? { Cookie: cookie } : {}),
+          ...formData.getHeaders(),
+        },
+        maxBodyLength: FILE_MAX_SIZE,
+        timeout: 60000,
+        validateStatus: () => true,
+      }
+    )
+
+    const { status, message, result } = response.data || {}
+    const isSuccess = response.status === 200 && (status === 0 || response.data?.code === 0) && result
+    if (!isSuccess) {
+      throw new Error(`Chat file upload failed: ${message || `HTTP ${response.status}`}`)
+    }
+
+    console.log('[GLM] Prompt text uploaded as file:', result.file_id)
+    return result
+  }
+
+  /**
    * Extract file URLs from message content
    */
   private extractFileUrls(messages: GLMMessage[]): { fileUrls: string[]; imageUrls: string[] } {
@@ -278,37 +344,8 @@ export class GLMAdapter {
     return { fileUrls, imageUrls }
   }
 
-  private messagesToPrompt(messages: GLMMessage[], refs: any[] = [], toolsPrompt?: string, isMultiTurn: boolean = false): { role: string; content: any[] }[] {
-    // Separate image refs and file refs
-    const imageRefs = refs.filter((ref) => ref.width !== undefined || ref.height !== undefined || ref.image_url)
-    const fileRefs = refs.filter((ref) => !ref.width && !ref.height && !ref.image_url)
-
-    // Build content array
-    const content: any[] = []
-
-    // Add file references first
-    if (fileRefs.length > 0) {
-      content.push({
-        type: 'file',
-        file: fileRefs.map((ref) => ({
-          source_id: ref.source_id,
-          file_url: ref.file_url,
-        })),
-      })
-    }
-
-    // Add image references
-    for (const imageRef of imageRefs) {
-      content.push({
-        type: 'image_url',
-        image_url: {
-          url: imageRef.image_url || imageRef.source_id,
-        },
-      })
-    }
-
-    // Process messages including tool calls and tool responses
-    const processedMessages = messages.map(msg => {
+  private normalizeMessagesForPrompt(messages: GLMMessage[]): GLMMessage[] {
+    return messages.map(msg => {
       // Handle tool calls in assistant message
       if (msg.role === 'assistant' && msg.tool_calls && msg.tool_calls.length > 0) {
         const toolCallsText = msg.tool_calls.map(tc => {
@@ -318,14 +355,18 @@ export class GLMAdapter {
       }
       // Handle tool response message
       if (msg.role === 'tool' && msg.tool_call_id) {
-        return { 
-          ...msg, 
+        return {
+          ...msg,
           role: 'user' as const,
-          content: `[TOOL_RESULT for ${msg.tool_call_id}] ${msg.content || ''}` 
+          content: `[TOOL_RESULT for ${msg.tool_call_id}] ${msg.content || ''}`,
         }
       }
       return msg
     })
+  }
+
+  private buildPromptText(messages: GLMMessage[], toolsPrompt?: string, isMultiTurn: boolean = false): string {
+    const processedMessages = this.normalizeMessagesForPrompt(messages)
 
     // For multi-turn mode, only send the last user message
     if (isMultiTurn) {
@@ -336,7 +377,7 @@ export class GLMAdapter {
           break
         }
       }
-      
+
       if (lastUserIdx !== -1) {
         const lastUserMsg = processedMessages[lastUserIdx]
         let textContent = ''
@@ -345,23 +386,22 @@ export class GLMAdapter {
         } else if (Array.isArray(lastUserMsg.content)) {
           textContent = lastUserMsg.content.filter((c) => c.type === 'text').map((c) => c.text).join('')
         }
-        
+
         // Include any tool results after the last user message
         for (let i = lastUserIdx + 1; i < processedMessages.length; i++) {
           if (processedMessages[i].role === 'user') {
-            const toolText = typeof processedMessages[i].content === 'string' 
-              ? processedMessages[i].content 
+            const toolText = typeof processedMessages[i].content === 'string'
+              ? processedMessages[i].content
               : ''
             textContent += '\n' + toolText
           }
         }
-        
+
         if (toolsPrompt) {
           textContent = textContent.trim() + "\n\n" + toolsPrompt
         }
-        
-        content.push({ type: 'text', text: textContent })
-        return [{ role: 'user', content }]
+
+        return textContent
       }
     }
 
@@ -382,8 +422,7 @@ export class GLMAdapter {
         textContent = textContent.trim() + "\n\n" + toolsPrompt
       }
 
-      content.push({ type: 'text', text: textContent })
-      return [{ role: 'user', content }]
+      return textContent
     }
 
     let textContent = processedMessages.reduce((acc, msg) => {
@@ -406,8 +445,106 @@ export class GLMAdapter {
       textContent = textContent.trim() + "\n\n" + toolsPrompt
     }
 
-    content.push({ type: 'text', text: textContent + 'Assistant: ' })
+    return textContent + 'Assistant: '
+  }
+
+  private toPromptFileRef(ref: any, order: number): Record<string, unknown> {
+    if (ref.file_id) {
+      return {
+        file_id: ref.file_id,
+        file_url: ref.file_url,
+        file_name: ref.file_name,
+        file_size: ref.file_size,
+        order,
+        maxReadPercent: ref.maxReadPercent ?? 0,
+        cover_images: ref.cover_images || [''],
+        url: ref.url || ref.file_url,
+        width: ref.width ?? 0,
+        height: ref.height ?? 0,
+      }
+    }
+
+    return {
+      source_id: ref.source_id,
+      file_url: ref.file_url,
+    }
+  }
+
+  private messagesToPrompt(messages: GLMMessage[], refs: any[] = [], toolsPrompt?: string, isMultiTurn: boolean = false, includeText: boolean = true): { role: string; content: any[] }[] {
+    // Separate image refs and file refs
+    const imageRefs = refs.filter((ref) => ref.image_url && !ref.file_id)
+    const fileRefs = refs.filter((ref) => !ref.image_url || ref.file_id)
+
+    // Build content array
+    const content: any[] = []
+
+    // Add file references first
+    if (fileRefs.length > 0) {
+      content.push({
+        type: 'file',
+        file: fileRefs.map((ref, index) => this.toPromptFileRef(ref, index)),
+      })
+    }
+
+    // Add image references
+    for (const imageRef of imageRefs) {
+      content.push({
+        type: 'image_url',
+        image_url: {
+          url: imageRef.image_url || imageRef.source_id,
+        },
+      })
+    }
+
+    if (includeText) {
+      const textContent = this.buildPromptText(messages, toolsPrompt, isMultiTurn)
+      if (textContent.trim()) {
+        content.push({ type: 'text', text: textContent })
+      }
+    }
+
     return [{ role: 'user', content }]
+  }
+
+  private maskFileUrl(url?: string): string | undefined {
+    return url ? url.replace(/\?.*$/, '?...') : undefined
+  }
+
+  private summarizePreparedMessages(messages: { role: string; content: any[] }[]): unknown {
+    return messages.map((msg) => ({
+      role: msg.role,
+      content: msg.content.map((part) => {
+        if (part.type === 'file') {
+          return {
+            type: 'file',
+            file: (part.file || []).map((file: any) => ({
+              file_id: file.file_id,
+              source_id: file.source_id,
+              file_name: file.file_name,
+              file_size: file.file_size,
+              file_type: file.file_type,
+              file_url: this.maskFileUrl(file.file_url || file.url),
+            })),
+          }
+        }
+
+        if (part.type === 'text') {
+          return {
+            type: 'text',
+            textLength: typeof part.text === 'string' ? part.text.length : 0,
+          }
+        }
+
+        if (part.type === 'image_url') {
+          return {
+            type: 'image_url',
+            image_url: this.maskFileUrl(part.image_url?.url),
+          }
+        }
+
+        return { type: part.type || 'unknown' }
+      }),
+    }))
   }
 
   async chatCompletion(request: ChatCompletionRequest): Promise<{ response: AxiosResponse; conversationId: string }> {
@@ -447,40 +584,6 @@ GLM STRICT RULES:
       }
     }
 
-    // Extract and upload files
-    const { fileUrls, imageUrls } = this.extractFileUrls(messages)
-    const refs: any[] = []
-
-    // Upload files
-    for (const fileUrl of fileUrls) {
-      try {
-        const result = await this.uploadFile(fileUrl)
-        refs.push({
-          source_id: result.source_id,
-          file_url: result.file_url || fileUrl,
-        })
-      } catch (error) {
-        console.error('[GLM] Failed to upload file:', error)
-      }
-    }
-
-    // Upload images
-    for (const imageUrl of imageUrls) {
-      try {
-        const result = await this.uploadFile(imageUrl)
-        refs.push({
-          source_id: result.source_id,
-          image_url: result.file_url || imageUrl,
-          width: 0,
-          height: 0,
-        })
-      } catch (error) {
-        console.error('[GLM] Failed to upload image:', error)
-      }
-    }
-
-    const preparedMessages = this.messagesToPrompt(messages, refs, toolsPrompt, false)
-
     let assistantId = DEFAULT_ASSISTANT_ID
     let chatMode = ''
     let isNetworking = false
@@ -518,6 +621,70 @@ GLM STRICT RULES:
     if (/^[a-z0-9]{24,}$/.test(request.model)) {
       assistantId = request.model
     }
+
+    // Extract and upload files
+    const { fileUrls, imageUrls } = this.extractFileUrls(messages)
+    const refs: any[] = []
+
+    // Upload files
+    for (const fileUrl of fileUrls) {
+      try {
+        const result = await this.uploadFile(fileUrl)
+        refs.push({
+          source_id: result.source_id,
+          file_url: result.file_url || fileUrl,
+        })
+      } catch (error) {
+        console.error('[GLM] Failed to upload file:', error)
+      }
+    }
+
+    // Upload images
+    for (const imageUrl of imageUrls) {
+      try {
+        const result = await this.uploadFile(imageUrl)
+        refs.push({
+          source_id: result.source_id,
+          image_url: result.file_url || imageUrl,
+          width: 0,
+          height: 0,
+        })
+      } catch (error) {
+        console.error('[GLM] Failed to upload image:', error)
+      }
+    }
+
+    const promptText = this.buildPromptText(messages, toolsPrompt, false)
+    let includeInlineText = true
+
+    if (promptText.trim()) {
+      try {
+        console.log('[GLM] Prompt text upload attempt:', JSON.stringify({
+          textLength: promptText.length,
+          assistantId,
+        }))
+        const uploadedTextFile = await this.uploadTextAsChatFile(promptText, assistantId)
+        console.log('[GLM] Prompt text upload result:', JSON.stringify({
+          file_id: uploadedTextFile.file_id,
+          file_name: uploadedTextFile.file_name,
+          file_size: uploadedTextFile.file_size,
+          file_type: uploadedTextFile.file_type,
+          file_url: this.maskFileUrl(uploadedTextFile.file_url),
+        }))
+        refs.push(uploadedTextFile)
+        includeInlineText = false
+      } catch (error) {
+        console.error('[GLM] Failed to upload prompt text as file, fallback to inline text:', error)
+      }
+    }
+
+    const preparedMessages = this.messagesToPrompt(messages, refs, toolsPrompt, false, includeInlineText)
+
+    console.log('[GLM] Prepared messages summary:', JSON.stringify({
+      includeInlineText,
+      refCount: refs.length,
+      messages: this.summarizePreparedMessages(preparedMessages),
+    }, null, 2))
 
     console.log('[GLM] Sending chat request...')
     

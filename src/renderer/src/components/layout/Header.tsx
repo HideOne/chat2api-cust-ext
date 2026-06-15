@@ -1,5 +1,5 @@
 import { useTranslation } from 'react-i18next'
-import { Sun, Moon, Languages, Play, Pause, FolderOpen } from 'lucide-react'
+import { Sun, Moon, Languages, Play, Pause } from 'lucide-react'
 import { useTheme } from '@/hooks/useTheme'
 import { cn } from '@/lib/utils'
 import logoIcon from '@/assets/icons/icons.png'
@@ -50,14 +50,6 @@ export function Header() {
     setLanguage(language === 'zh-CN' ? 'en-US' : 'zh-CN')
   }
 
-  const handleOpenForwardLogsFolder = async () => {
-    try {
-      await window.electronAPI?.app?.openForwardLogsFolder()
-    } catch (error) {
-      console.error('Failed to open forward logs folder:', error)
-    }
-  }
-
   return (
     <header className="glass-topbar flex items-center justify-between px-4 drag-region h-12">
       <div className="flex items-center gap-3 no-drag">
@@ -86,14 +78,6 @@ export function Header() {
           ) : (
             <Moon className="h-4 w-4 text-[var(--text-primary)] group-hover:text-[var(--accent-primary)]" />
           )}
-        </button>
-
-        <button
-          onClick={handleOpenForwardLogsFolder}
-          className="w-8 h-8 flex items-center justify-center rounded-lg transition-all duration-300 group"
-          title={t('header.openForwardLogsFolder')}
-        >
-          <FolderOpen className="h-4 w-4 text-[var(--text-primary)] group-hover:text-[var(--accent-primary)]" />
         </button>
 
         <button

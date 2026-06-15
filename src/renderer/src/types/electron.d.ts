@@ -268,7 +268,6 @@ interface AppAPI {
   showWindow: () => Promise<void>
   hideWindow: () => Promise<void>
   openExternal: (url: string) => Promise<void>
-  openForwardLogsFolder: () => Promise<string>
 }
 
 interface ConfigAPI {

@@ -9,6 +9,7 @@
 export type ClientType =
   | 'cline'
   | 'rooCode'
+  | 'zooCode'
   | 'claudeCode'
   | 'cherryStudio'
   | 'kilocode'
@@ -69,6 +70,18 @@ export const CLIENT_SIGNATURES: Record<ClientType, ClientSignatureConfig> = {
       'When invoking a tool',
     ],
     toolCallFormat: 'xml',
+    injectsPrompt: true,
+  },
+  zooCode: {
+    id: 'zooCode',
+    name: 'Zoo Code',
+    detectPatterns: [
+      'Zoo Code',
+      'You are Zoo',
+      '## Tools',
+      'Tool definitions:',
+    ],
+    toolCallFormat: 'native',
     injectsPrompt: true,
   },
   claudeCode: {
@@ -157,6 +170,8 @@ export const GENERAL_TOOL_SIGNATURES = [
   'TOOL USE',
   '## Tool Use',
   '## Tools',
+  'Zoo Code',
+  'Tool definitions:',
 ]
 
 /**

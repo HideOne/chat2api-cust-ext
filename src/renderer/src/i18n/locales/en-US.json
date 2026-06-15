@@ -1,8 +1,7 @@
 {
   "header": {
     "switchToEnglish": "Switch to English",
-    "switchToChinese": "Switch to Chinese",
-    "openForwardLogsFolder": "Open forward logs folder"
+    "switchToChinese": "Switch to Chinese"
   },
   "app": {
     "name": "Chat2API",
@@ -674,11 +673,6 @@
     "oauthProxySystem": "System Proxy",
     "oauthProxyNone": "No Proxy",
     "logSettings": "Log Settings",
-    "logSettingsDesc": "Configure app logs and local forward request archives",
-    "enableForwardRequestLog": "Forward Request Logs",
-    "enableForwardRequestLogHelp": "When enabled, full request and response data is saved to ~/.chat2api/forward-logs/ in date-based folders",
-    "openForwardLogsFolder": "Open Forward Logs Folder",
-    "openForwardLogsFolderFailed": "Failed to open forward logs folder",
     "logLevel": "Log Level",
     "logLevelHelp": "Select log recording level",
     "selectLogLevel": "Select Log Level",

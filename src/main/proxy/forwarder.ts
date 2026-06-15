@@ -32,7 +32,6 @@ import { parseToolCalls } from './utils/toolParser/index'
 import { promptInjectionService } from './services/promptInjectionService'
 import { sessionManager } from './sessionManager'
 import { cleanClientToolPrompts } from './utils/promptSignatures'
-import { forwardRequestLogger } from './utils/forwardRequestLogger'
 import {
   createContextManagementService,
   SummaryGenerator,
@@ -360,7 +359,6 @@ CRITICAL RULES:
     const maxRetries = config.retryCount
 
     let lastError: string | undefined
-    let lastForwardRequest = request
 
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
       if (attempt > 0) {
@@ -418,42 +416,16 @@ CRITICAL RULES:
         }
       }
 
-      lastForwardRequest = modifiedRequest
-
       try {
         const result = await this.doForward(modifiedRequest, account, provider, actualModel, context)
 
         if (result.success) {
-          return this.attachForwardLog(
-            result,
-            request,
-            modifiedRequest,
-            account,
-            provider,
-            actualModel,
-            context
-          )
+          return result
         }
 
         lastError = result.error
 
         if (result.status && result.status < 500 && result.status !== 429) {
-          this.saveForwardLog({
-            clientRequest: request,
-            forwardRequest: modifiedRequest,
-            account,
-            provider,
-            actualModel,
-            context,
-            status: 'error',
-            latency: result.latency ?? Date.now() - startTime,
-            error: result.error,
-            response: {
-              status: result.status,
-              headers: result.headers,
-              body: result.body,
-            },
-          })
           break
         }
       } catch (error) {
@@ -461,120 +433,11 @@ CRITICAL RULES:
       }
     }
 
-    const finalLatency = Date.now() - startTime
-    this.saveForwardLog({
-      clientRequest: request,
-      forwardRequest: lastForwardRequest,
-      account,
-      provider,
-      actualModel,
-      context,
-      status: 'error',
-      latency: finalLatency,
-      error: lastError || 'Request failed after retries',
-    })
-
     return {
       success: false,
       error: lastError || 'Request failed after retries',
-      latency: finalLatency,
+      latency: Date.now() - startTime,
     }
-  }
-
-  private saveForwardLog(params: {
-    clientRequest: ChatCompletionRequest
-    forwardRequest: ChatCompletionRequest
-    account: Account
-    provider: Provider
-    actualModel: string
-    context: ProxyContext
-    status: 'success' | 'error'
-    latency: number
-    response?: {
-      status?: number
-      headers?: Record<string, string>
-      body?: unknown
-    }
-    error?: string
-  }): void {
-    if (!forwardRequestLogger.isEnabled()) {
-      return
-    }
-
-    const entry = forwardRequestLogger.buildLogEntry({
-      context: params.context,
-      account: params.account,
-      provider: params.provider,
-      actualModel: params.actualModel,
-      clientRequest: params.clientRequest,
-      forwardRequest: params.forwardRequest,
-      status: params.status,
-      latency: params.latency,
-      response: params.response,
-      error: params.error,
-    })
-
-    forwardRequestLogger.saveLog(entry).catch((error) => {
-      console.error('[Forwarder] Failed to save forward log:', error)
-    })
-  }
-
-  private attachForwardLog(
-    result: ForwardResult,
-    clientRequest: ChatCompletionRequest,
-    forwardRequest: ChatCompletionRequest,
-    account: Account,
-    provider: Provider,
-    actualModel: string,
-    context: ProxyContext
-  ): ForwardResult {
-    if (!forwardRequestLogger.isEnabled()) {
-      return result
-    }
-
-    const latency = result.latency ?? Date.now() - context.startTime
-
-    if (result.stream) {
-      const loggedStream = forwardRequestLogger.attachStreamLogger(result.stream, {
-        requestId: context.requestId,
-        timestamp: context.startTime,
-        latency,
-        providerId: provider.id,
-        providerName: provider.name,
-        accountId: account.id,
-        accountName: account.name,
-        model: context.model,
-        actualModel,
-        isStream: true,
-        clientRequest,
-        forwardRequest,
-        responseStatus: result.status,
-        responseHeaders: result.headers,
-      })
-
-      return {
-        ...result,
-        stream: loggedStream,
-      }
-    }
-
-    this.saveForwardLog({
-      clientRequest,
-      forwardRequest,
-      account,
-      provider,
-      actualModel,
-      context,
-      status: 'success',
-      latency,
-      response: {
-        status: result.status,
-        headers: result.headers,
-        body: result.body,
-      },
-    })
-
-    return result
   }
 
   /**
