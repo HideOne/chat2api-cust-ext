@@ -66,7 +66,12 @@ interface GLMMessage {
   tool_calls?: any[]
 }
 
-interface GLMChatUploadFile {
+interface GLMUploadInput {
+  url: string
+  name?: string
+}
+
+interface GLMUploadedFile {
   file_id: string
   file_url: string
   file_name: string
@@ -76,6 +81,7 @@ interface GLMChatUploadFile {
   url?: string
   width?: number
   height?: number
+  maxReadPercent?: number
 }
 
 interface ChatCompletionRequest {
@@ -129,7 +135,45 @@ export class GLMAdapter {
 
   private getRefreshToken(): string {
     const credentials = this.account.credentials
-    return credentials.refresh_token || credentials.token || ''
+    return credentials.chatglm_refresh_token || credentials.refresh_token || credentials.refreshToken || credentials.token || ''
+  }
+
+  private decodeJwtPayload(token: string): Record<string, any> | null {
+    try {
+      const payload = token.split('.')[1]
+      if (!payload) {
+        return null
+      }
+
+      const normalized = payload.replace(/-/g, '+').replace(/_/g, '/')
+      const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, '=')
+      return JSON.parse(Buffer.from(padded, 'base64').toString('utf8'))
+    } catch {
+      return null
+    }
+  }
+
+  private buildAuthCookie(accessToken: string): string | undefined {
+    if (this.account.credentials.cookie) {
+      return this.account.credentials.cookie
+    }
+
+    const refreshToken = this.getRefreshToken()
+    const payload = this.decodeJwtPayload(accessToken)
+    const userId = payload?.uid
+    const parts: string[] = []
+
+    if (userId) {
+      parts.push(`chatglm_user_id=${userId}`)
+    }
+    if (accessToken) {
+      parts.push(`chatglm_token=${accessToken}`)
+    }
+    if (refreshToken) {
+      parts.push(`chatglm_refresh_token=${refreshToken}`)
+    }
+
+    return parts.length > 0 ? parts.join('; ') : undefined
   }
 
   private async acquireToken(): Promise<string> {
@@ -214,7 +258,7 @@ export class GLMAdapter {
   /**
    * Upload file to GLM
    */
-  private async uploadFile(fileUrl: string): Promise<{ source_id: string; file_url?: string }> {
+  private async uploadFile(fileUrl: string, assistantId: string, fallbackName?: string): Promise<GLMUploadedFile> {
     console.log('[GLM] Uploading file:', fileUrl.substring(0, 50) + '...')
     
     let filename: string
@@ -224,10 +268,10 @@ export class GLMAdapter {
     if (this.isBase64Data(fileUrl)) {
       mimeType = this.extractBase64Format(fileUrl)
       const ext = mime.extension(mimeType) || 'bin'
-      filename = `${uuid()}.${ext}`
+      filename = fallbackName || `${uuid()}.${ext}`
       fileData = Buffer.from(this.removeBase64Header(fileUrl), 'base64')
     } else {
-      filename = path.basename(fileUrl.split('?')[0])
+      filename = fallbackName || path.basename(fileUrl.split('?')[0])
       const response = await axios.get(fileUrl, {
         responseType: 'arraybuffer',
         maxContentLength: FILE_MAX_SIZE,
@@ -242,59 +286,22 @@ export class GLMAdapter {
       filename,
       contentType: mimeType,
     })
-
-    const token = await this.acquireToken()
-    const response = await axios.post(
-      `${GLM_API_BASE}/backend-api/assistant/file_upload`,
-      formData,
-      {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          Referer: 'https://chatglm.cn/',
-          ...FAKE_HEADERS,
-          ...formData.getHeaders(),
-        },
-        maxBodyLength: FILE_MAX_SIZE,
-        timeout: 60000,
-        validateStatus: () => true,
-      }
-    )
-
-    if (response.status !== 200 || !response.data?.result) {
-      throw new Error(`File upload failed: HTTP ${response.status}`)
-    }
-
-    console.log('[GLM] File uploaded successfully:', response.data.result.source_id)
-    return response.data.result
-  }
-
-  /**
-   * Upload prompt text as a chat file.
-   * GLM web chat truncates long plain text input, while uploaded txt files can be
-   * passed to /backend-api/assistant/stream as file content.
-   */
-  private async uploadTextAsChatFile(text: string, assistantId: string): Promise<GLMChatUploadFile> {
-    const token = await this.acquireToken()
-    const sign = generateSign()
-    const filename = `chat2api-message-${Date.now()}.txt`
-    const fileData = Buffer.from(text, 'utf8')
-    const formData = new FormData()
-
-    formData.append('file', fileData, {
-      filename,
-      contentType: 'text/plain',
-    })
     formData.append('from', 'chat')
     formData.append('assistant_id', assistantId)
 
-    const cookie = this.account.credentials.cookie
+    const token = await this.acquireToken()
+    const sign = generateSign()
+    const cookie = this.buildAuthCookie(token)
+    const uploadBaseHeaders = { ...FAKE_HEADERS }
+    delete uploadBaseHeaders.Accept
+    delete uploadBaseHeaders['Content-Type']
     const response = await axios.post(
       `${GLM_API_BASE}/productivity-api/file/chat_upload`,
       formData,
       {
         headers: {
           Authorization: `Bearer ${token}`,
-          ...FAKE_HEADERS,
+          ...uploadBaseHeaders,
           Accept: 'application/json, text/plain, */*',
           Referer: 'https://chatglm.cn/main/alltoolsdetail',
           'X-App-Fr': 'default',
@@ -313,29 +320,38 @@ export class GLMAdapter {
     )
 
     const { status, message, result } = response.data || {}
-    const isSuccess = response.status === 200 && (status === 0 || response.data?.code === 0) && result
+    const isSuccess = response.status === 200 && (status === 0 || response.data?.code === 0) && result?.file_id
     if (!isSuccess) {
-      throw new Error(`Chat file upload failed: ${message || `HTTP ${response.status}`}`)
+      const responseText = typeof response.data === 'string'
+        ? response.data
+        : JSON.stringify(response.data || {})
+      throw new Error(`File upload failed: ${message || `HTTP ${response.status}`}; response=${responseText.slice(0, 500)}`)
     }
 
-    console.log('[GLM] Prompt text uploaded as file:', result.file_id)
+    console.log('[GLM] File uploaded successfully:', result.file_id)
     return result
   }
 
   /**
    * Extract file URLs from message content
    */
-  private extractFileUrls(messages: GLMMessage[]): { fileUrls: string[]; imageUrls: string[] } {
-    const fileUrls: string[] = []
-    const imageUrls: string[] = []
+  private extractFileUrls(messages: GLMMessage[]): { fileUrls: GLMUploadInput[]; imageUrls: GLMUploadInput[] } {
+    const fileUrls: GLMUploadInput[] = []
+    const imageUrls: GLMUploadInput[] = []
 
     for (const msg of messages) {
       if (Array.isArray(msg.content)) {
         for (const part of msg.content) {
           if (part.type === 'image_url' && part.image_url?.url) {
-            imageUrls.push(part.image_url.url)
+            imageUrls.push({
+              url: part.image_url.url,
+              name: part.image_url.name,
+            })
           } else if (part.type === 'file' && part.file_url?.url) {
-            fileUrls.push(part.file_url.url)
+            fileUrls.push({
+              url: part.file_url.url,
+              name: part.file_url.name,
+            })
           }
         }
       }
@@ -455,6 +471,7 @@ export class GLMAdapter {
         file_url: ref.file_url,
         file_name: ref.file_name,
         file_size: ref.file_size,
+        file_type: ref.file_type,
         order,
         maxReadPercent: ref.maxReadPercent ?? 0,
         cover_images: ref.cover_images || [''],
@@ -504,47 +521,6 @@ export class GLMAdapter {
     }
 
     return [{ role: 'user', content }]
-  }
-
-  private maskFileUrl(url?: string): string | undefined {
-    return url ? url.replace(/\?.*$/, '?...') : undefined
-  }
-
-  private summarizePreparedMessages(messages: { role: string; content: any[] }[]): unknown {
-    return messages.map((msg) => ({
-      role: msg.role,
-      content: msg.content.map((part) => {
-        if (part.type === 'file') {
-          return {
-            type: 'file',
-            file: (part.file || []).map((file: any) => ({
-              file_id: file.file_id,
-              source_id: file.source_id,
-              file_name: file.file_name,
-              file_size: file.file_size,
-              file_type: file.file_type,
-              file_url: this.maskFileUrl(file.file_url || file.url),
-            })),
-          }
-        }
-
-        if (part.type === 'text') {
-          return {
-            type: 'text',
-            textLength: typeof part.text === 'string' ? part.text.length : 0,
-          }
-        }
-
-        if (part.type === 'image_url') {
-          return {
-            type: 'image_url',
-            image_url: this.maskFileUrl(part.image_url?.url),
-          }
-        }
-
-        return { type: part.type || 'unknown' }
-      }),
-    }))
   }
 
   async chatCompletion(request: ChatCompletionRequest): Promise<{ response: AxiosResponse; conversationId: string }> {
@@ -627,64 +603,26 @@ GLM STRICT RULES:
     const refs: any[] = []
 
     // Upload files
-    for (const fileUrl of fileUrls) {
+    for (const file of fileUrls) {
       try {
-        const result = await this.uploadFile(fileUrl)
-        refs.push({
-          source_id: result.source_id,
-          file_url: result.file_url || fileUrl,
-        })
+        const result = await this.uploadFile(file.url, assistantId, file.name)
+        refs.push(result)
       } catch (error) {
         console.error('[GLM] Failed to upload file:', error)
       }
     }
 
     // Upload images
-    for (const imageUrl of imageUrls) {
+    for (const image of imageUrls) {
       try {
-        const result = await this.uploadFile(imageUrl)
-        refs.push({
-          source_id: result.source_id,
-          image_url: result.file_url || imageUrl,
-          width: 0,
-          height: 0,
-        })
+        const result = await this.uploadFile(image.url, assistantId, image.name)
+        refs.push(result)
       } catch (error) {
         console.error('[GLM] Failed to upload image:', error)
       }
     }
 
-    const promptText = this.buildPromptText(messages, toolsPrompt, false)
-    let includeInlineText = true
-
-    if (promptText.trim()) {
-      try {
-        console.log('[GLM] Prompt text upload attempt:', JSON.stringify({
-          textLength: promptText.length,
-          assistantId,
-        }))
-        const uploadedTextFile = await this.uploadTextAsChatFile(promptText, assistantId)
-        console.log('[GLM] Prompt text upload result:', JSON.stringify({
-          file_id: uploadedTextFile.file_id,
-          file_name: uploadedTextFile.file_name,
-          file_size: uploadedTextFile.file_size,
-          file_type: uploadedTextFile.file_type,
-          file_url: this.maskFileUrl(uploadedTextFile.file_url),
-        }))
-        refs.push(uploadedTextFile)
-        includeInlineText = false
-      } catch (error) {
-        console.error('[GLM] Failed to upload prompt text as file, fallback to inline text:', error)
-      }
-    }
-
-    const preparedMessages = this.messagesToPrompt(messages, refs, toolsPrompt, false, includeInlineText)
-
-    console.log('[GLM] Prepared messages summary:', JSON.stringify({
-      includeInlineText,
-      refCount: refs.length,
-      messages: this.summarizePreparedMessages(preparedMessages),
-    }, null, 2))
+    const preparedMessages = this.messagesToPrompt(messages, refs, toolsPrompt, false)
 
     console.log('[GLM] Sending chat request...')
     

@@ -6,10 +6,20 @@ export interface Message {
   id: string
   role: 'user' | 'assistant' | 'system'
   content: string
+  attachments?: ChatAttachment[]
   timestamp: number
   model?: string
   status?: 'sending' | 'streaming' | 'done' | 'error'
   error?: string
+}
+
+export interface ChatAttachment {
+  id: string
+  name: string
+  type: 'image' | 'file'
+  mimeType: string
+  size: number
+  dataUrl: string
 }
 
 export interface Conversation {
@@ -50,7 +60,7 @@ interface ChatState {
     error?: string
   ) => void
   fetchModels: () => Promise<void>
-  sendMessage: (conversationId: string, content: string) => Promise<void>
+  sendMessage: (conversationId: string, content: string, attachments?: ChatAttachment[]) => Promise<void>
   stopStreaming: () => void
 }
 
@@ -74,6 +84,39 @@ function getAuthHeaders(): Record<string, string> {
     }
   }
   return headers
+}
+
+function buildMessageContent(content: string, attachments?: ChatAttachment[]): string | any[] {
+  if (!attachments || attachments.length === 0) {
+    return content
+  }
+
+  const parts: any[] = []
+  for (const attachment of attachments) {
+    if (attachment.type === 'image') {
+      parts.push({
+        type: 'image_url',
+        image_url: {
+          url: attachment.dataUrl,
+          name: attachment.name,
+        },
+      })
+    } else {
+      parts.push({
+        type: 'file',
+        file_url: {
+          url: attachment.dataUrl,
+          name: attachment.name,
+        },
+      })
+    }
+  }
+
+  if (content.trim()) {
+    parts.push({ type: 'text', text: content })
+  }
+
+  return parts
 }
 
 export const useChatStore = create<ChatState>()(
@@ -183,7 +226,7 @@ export const useChatStore = create<ChatState>()(
         }
       },
 
-      sendMessage: async (conversationId: string, content: string) => {
+      sendMessage: async (conversationId: string, content: string, attachments: ChatAttachment[] = []) => {
         const state = get()
         const conversation = state.conversations.find((c) => c.id === conversationId)
         if (!conversation) return
@@ -193,6 +236,7 @@ export const useChatStore = create<ChatState>()(
           id: generateId(),
           role: 'user',
           content,
+          attachments,
           timestamp: Date.now(),
         }
         const assistantMessage: Message = {
@@ -205,8 +249,9 @@ export const useChatStore = create<ChatState>()(
         }
 
         const updatedMessages = [...conversation.messages, userMessage, assistantMessage]
+        const titleSource = content || attachments[0]?.name || 'New chat'
         const autoTitle =
-          conversation.title || content.slice(0, 50) + (content.length > 50 ? '...' : '')
+          conversation.title || titleSource.slice(0, 50) + (titleSource.length > 50 ? '...' : '')
 
         set((state) => ({
           conversations: state.conversations.map((c) =>
@@ -231,9 +276,15 @@ export const useChatStore = create<ChatState>()(
           }
           for (const msg of conversation.messages) {
             if (msg.status === 'error') continue
-            apiMessages.push({ role: msg.role, content: msg.content })
+            apiMessages.push({
+              role: msg.role,
+              content: buildMessageContent(msg.content, msg.attachments),
+            })
           }
-          apiMessages.push({ role: 'user', content })
+          apiMessages.push({
+            role: 'user',
+            content: buildMessageContent(content, attachments),
+          })
 
           const response = await fetch(`${baseUrl}/v1/chat/completions`, {
             method: 'POST',

@@ -19,16 +19,16 @@ export interface TokenCheckResult {
 export class ProviderChecker {
   static async checkProviderStatus(provider: Provider): Promise<ProviderCheckResult> {
     const startTime = Date.now()
-    
+
     try {
-      const builtinConfig = provider.type === 'builtin' 
-        ? getBuiltinProvider(provider.id) 
+      const builtinConfig = provider.type === 'builtin'
+        ? getBuiltinProvider(provider.id)
         : null
-      
+
       if (builtinConfig) {
         return await this.checkBuiltinProvider(builtinConfig)
       }
-      
+
       return await this.checkCustomProvider(provider)
     } catch (error) {
       return {
@@ -42,19 +42,19 @@ export class ProviderChecker {
 
   private static async checkBuiltinProvider(config: BuiltinProviderConfig): Promise<ProviderCheckResult> {
     const startTime = Date.now()
-    
+
     try {
       const checkUrl = `${config.apiEndpoint.replace('/api', '')}${config.tokenCheckEndpoint || '/health'}`
-      
+
       const response = await axios({
         method: 'GET',
         url: checkUrl,
         timeout: CHECK_TIMEOUT,
         validateStatus: () => true,
       })
-      
+
       const latency = Date.now() - startTime
-      
+
       if (response.status >= 200 && response.status < 500) {
         return {
           providerId: config.id,
@@ -62,7 +62,7 @@ export class ProviderChecker {
           latency,
         }
       }
-      
+
       return {
         providerId: config.id,
         status: 'offline',
@@ -81,7 +81,7 @@ export class ProviderChecker {
 
   private static async checkCustomProvider(provider: Provider): Promise<ProviderCheckResult> {
     const startTime = Date.now()
-    
+
     try {
       const response = await axios({
         method: 'GET',
@@ -90,9 +90,9 @@ export class ProviderChecker {
         timeout: CHECK_TIMEOUT,
         validateStatus: () => true,
       })
-      
+
       const latency = Date.now() - startTime
-      
+
       if (response.status >= 200 && response.status < 500) {
         return {
           providerId: provider.id,
@@ -100,7 +100,7 @@ export class ProviderChecker {
           latency,
         }
       }
-      
+
       return {
         providerId: provider.id,
         status: 'offline',
@@ -121,14 +121,14 @@ export class ProviderChecker {
     provider: Provider,
     account: Account
   ): Promise<TokenCheckResult> {
-    const builtinConfig = provider.type === 'builtin' 
-      ? getBuiltinProvider(provider.id) 
+    const builtinConfig = provider.type === 'builtin'
+      ? getBuiltinProvider(provider.id)
       : null
-    
+
     if (!builtinConfig) {
       return this.checkCustomAccountToken(provider, account)
     }
-    
+
     switch (provider.id) {
       case 'deepseek':
         return this.checkDeepSeekToken(account.credentials.token)
@@ -181,7 +181,7 @@ export class ProviderChecker {
   private static async checkDeepSeekToken(token: string): Promise<TokenCheckResult> {
     try {
       console.log('[DeepSeek] Validating Token:', token.substring(0, 20) + '...')
-      
+
       const response = await axios.get(
         'https://chat.deepseek.com/api/v0/users/current',
         {
@@ -196,10 +196,10 @@ export class ProviderChecker {
           validateStatus: () => true,
         }
       )
-      
+
       console.log('[DeepSeek] Response status:', response.status)
       console.log('[DeepSeek] Response data:', JSON.stringify(response.data, null, 2))
-      
+
       // Response format: { code: 0, data: { biz_data: { ... } } }
       if (response.status === 200 && response.data?.code === 0 && response.data?.data?.biz_data) {
         const bizData = response.data.data.biz_data
@@ -211,18 +211,18 @@ export class ProviderChecker {
           },
         }
       }
-      
+
       if (response.status === 401 || response.data?.code === 40003 || response.data?.data?.biz_code === 40003) {
         return { valid: false, error: 'Token expired or invalid' }
       }
-      
+
       return { valid: false, error: `Validation failed: ${response.data?.msg || response.data?.message || JSON.stringify(response.data)}` }
     } catch (error) {
       console.error('[DeepSeek] Validation error:', error)
       return {
         valid: false,
-        error: error instanceof AxiosError 
-          ? error.message 
+        error: error instanceof AxiosError
+          ? error.message
           : 'Connection failed',
       }
     }
@@ -231,9 +231,9 @@ export class ProviderChecker {
   private static async checkGLMToken(refreshToken: string): Promise<TokenCheckResult> {
     try {
       console.log('[GLM] Validating Token:', refreshToken.substring(0, 20) + '...')
-      
+
       const sign = await this.generateGLMSignV2()
-      
+
       const response = await axios.post(
         'https://chatglm.cn/chatglm/user-api/user/refresh',
         {},
@@ -273,10 +273,10 @@ export class ProviderChecker {
           validateStatus: () => true,
         }
       )
-      
+
       console.log('[GLM] Response status:', response.status)
       console.log('[GLM] Response data:', JSON.stringify(response.data, null, 2))
-      
+
       if (response.status === 200 && response.data?.result?.access_token) {
         return {
           valid: true,
@@ -285,27 +285,27 @@ export class ProviderChecker {
           },
         }
       }
-      
+
       if (response.status === 401 || response.data?.status === 40001) {
         return { valid: false, error: 'Token expired or invalid' }
       }
-      
+
       return { valid: false, error: `Validation failed: ${response.data?.message || response.data?.msg || JSON.stringify(response.data)}` }
     } catch (error) {
       console.error('[GLM] Validation error:', error)
       return {
         valid: false,
-        error: error instanceof AxiosError 
-          ? error.message 
+        error: error instanceof AxiosError
+          ? error.message
           : 'Connection failed',
       }
     }
   }
-  
+
   private static async generateGLMSignV2(): Promise<{ timestamp: string; nonce: string; sign: string }> {
     const crypto = await import('crypto')
     const secret = '8a1317a7468aa3ad86e997d08f3f31cb'
-    
+
     // GLM timestamp algorithm
     const now = Date.now()
     const timestampStr = now.toString()
@@ -314,20 +314,20 @@ export class ProviderChecker {
     const sum = digits.reduce((a, b) => a + b, 0) - digits[len - 2]
     const checkDigit = sum % 10
     const timestamp = timestampStr.substring(0, len - 2) + checkDigit + timestampStr.substring(len - 1)
-    
+
     // Random UUID (no separators)
     const nonce = this.generateUUID().replace(/-/g, '')
-    
+
     // Signature
     const sign = crypto.createHash('md5').update(`${timestamp}-${nonce}-${secret}`).digest('hex')
-    
+
     return { timestamp, nonce, sign }
   }
 
   private static async checkKimiToken(token: string): Promise<TokenCheckResult> {
     try {
       console.log('[Kimi] Validating Token:', token.substring(0, 20) + '...')
-      
+
       const response = await axios.post(
         'https://www.kimi.com/apiv2/kimi.gateway.order.v1.SubscriptionService/GetSubscription',
         {},
@@ -344,10 +344,10 @@ export class ProviderChecker {
           validateStatus: () => true,
         }
       )
-      
+
       console.log('[Kimi] Response status:', response.status)
       console.log('[Kimi] Response data:', JSON.stringify(response.data, null, 2))
-      
+
       if (response.status === 200 && response.data?.subscription) {
         return {
           valid: true,
@@ -356,14 +356,14 @@ export class ProviderChecker {
           },
         }
       }
-      
+
       return { valid: false, error: 'Token expired or invalid' }
     } catch (error) {
       console.error('[Kimi] Validation error:', error)
       return {
         valid: false,
-        error: error instanceof AxiosError 
-          ? error.message 
+        error: error instanceof AxiosError
+          ? error.message
           : 'Connection failed',
       }
     }
@@ -375,12 +375,12 @@ export class ProviderChecker {
   ): Promise<TokenCheckResult> {
     try {
       console.log('[MiniMax] Validating Token:', token.substring(0, 30) + '...')
-      
+
       const crypto = await import('crypto')
-      
+
       let realUserID = ''
       let jwtToken = token
-      
+
       if (token.includes('+')) {
         const parts = token.split('+')
         realUserID = parts[0]
@@ -404,18 +404,18 @@ export class ProviderChecker {
           console.log('[MiniMax] Failed to parse JWT:', e)
         }
       }
-      
+
       if (!realUserID) {
         return { valid: false, error: 'Cannot extract user ID from token' }
       }
-      
+
       const uuid = realUserID
       const unix = Date.now().toString()
       const timestamp = Math.floor(Date.now() / 1000)
       const dataJson = JSON.stringify({ uuid })
-      
+
       const signature = crypto.createHash('md5').update(`${timestamp}${jwtToken}${dataJson}`).digest('hex')
-      
+
       const queryParams = new URLSearchParams({
         device_platform: 'web',
         biz_id: '3',
@@ -424,10 +424,10 @@ export class ProviderChecker {
         uuid: uuid,
         user_id: realUserID,
       }).toString()
-      
+
       const fullUri = `/v1/api/user/device/register?${queryParams}`
       const yy = crypto.createHash('md5').update(`${encodeURIComponent(fullUri)}_${dataJson}${crypto.createHash('md5').update(unix).digest('hex')}ooui`).digest('hex')
-      
+
       const response = await axios.post(
         `https://agent.minimaxi.com${fullUri}`,
         { uuid },
@@ -457,10 +457,10 @@ export class ProviderChecker {
           validateStatus: () => true,
         }
       )
-      
+
       console.log('[MiniMax] Response status:', response.status)
       console.log('[MiniMax] Response data:', JSON.stringify(response.data, null, 2))
-      
+
       if (response.status === 200 && response.data?.data?.deviceIDStr) {
         const userInfo = response.data.data.userInfo
         return {
@@ -471,18 +471,18 @@ export class ProviderChecker {
           },
         }
       }
-      
+
       if (response.data?.statusInfo?.code === 1001) {
         return { valid: false, error: 'Token expired or invalid' }
       }
-      
+
       return { valid: false, error: `Validation failed: ${response.data?.statusInfo?.message || 'Unknown error'}` }
     } catch (error) {
       console.error('[MiniMax] Validation error:', error)
       return {
         valid: false,
-        error: error instanceof AxiosError 
-          ? error.message 
+        error: error instanceof AxiosError
+          ? error.message
           : 'Connection failed',
       }
     }
@@ -515,23 +515,23 @@ export class ProviderChecker {
           validateStatus: () => true,
         }
       )
-      
+
       if (response.status === 200 && response.data?.success) {
         return {
           valid: true,
         }
       }
-      
+
       if (!response.data?.success) {
         return { valid: false, error: 'SSO ticket expired or invalid' }
       }
-      
+
       return { valid: false, error: `Validation failed: ${response.data?.errorMsg || 'Unknown error'}` }
     } catch (error) {
       return {
         valid: false,
-        error: error instanceof AxiosError 
-          ? error.message 
+        error: error instanceof AxiosError
+          ? error.message
           : 'Connection failed',
       }
     }
@@ -603,14 +603,14 @@ export class ProviderChecker {
       const headers: Record<string, string> = {
         ...config.headers,
       }
-      
+
       const credentials = account.credentials
       if (credentials.token) {
         headers['Authorization'] = `Bearer ${credentials.token}`
       } else if (credentials.apiKey) {
         headers['Authorization'] = `Bearer ${credentials.apiKey}`
       }
-      
+
       const response = await axios({
         method: config.tokenCheckMethod || 'GET',
         url: `${config.apiEndpoint.replace('/api', '')}${config.tokenCheckEndpoint}`,
@@ -618,21 +618,21 @@ export class ProviderChecker {
         timeout: CHECK_TIMEOUT,
         validateStatus: () => true,
       })
-      
+
       if (response.status >= 200 && response.status < 300) {
         return { valid: true }
       }
-      
+
       if (response.status === 401) {
         return { valid: false, error: 'Authentication failed, please check credentials' }
       }
-      
+
       return { valid: false, error: `Validation failed: HTTP ${response.status}` }
     } catch (error) {
       return {
         valid: false,
-        error: error instanceof AxiosError 
-          ? error.message 
+        error: error instanceof AxiosError
+          ? error.message
           : 'Connection failed',
       }
     }
@@ -646,14 +646,14 @@ export class ProviderChecker {
       const headers: Record<string, string> = {
         ...provider.headers,
       }
-      
+
       const credentials = account.credentials
       if (credentials.token) {
         headers['Authorization'] = `Bearer ${credentials.token}`
       } else if (credentials.apiKey) {
         headers['Authorization'] = `Bearer ${credentials.apiKey}`
       }
-      
+
       const response = await axios({
         method: 'GET',
         url: `${provider.apiEndpoint}/models`,
@@ -661,21 +661,21 @@ export class ProviderChecker {
         timeout: CHECK_TIMEOUT,
         validateStatus: () => true,
       })
-      
+
       if (response.status >= 200 && response.status < 300) {
         return { valid: true }
       }
-      
+
       if (response.status === 401) {
         return { valid: false, error: 'Authentication failed, please check credentials' }
       }
-      
+
       return { valid: false, error: `Validation failed: HTTP ${response.status}` }
     } catch (error) {
       return {
         valid: false,
-        error: error instanceof AxiosError 
-          ? error.message 
+        error: error instanceof AxiosError
+          ? error.message
           : 'Connection failed',
       }
     }
@@ -702,7 +702,7 @@ export class ProviderChecker {
     modelMappings: Record<string, string>
   }> {
     const builtinConfig = getBuiltinProvider(providerId)
-    
+
     if (!builtinConfig) {
       throw new Error(`Provider ${providerId} not found`)
     }

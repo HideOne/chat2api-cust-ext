@@ -1,14 +1,13 @@
-import { useTranslation } from 'react-i18next'
 import type { Message } from '@/stores/chatStore'
 import { MarkdownRenderer } from './MarkdownRenderer'
 import { StreamingIndicator } from './StreamingIndicator'
+import { FileText } from 'lucide-react'
 
 interface MessageBubbleProps {
   message: Message
 }
 
 export function MessageBubble({ message }: MessageBubbleProps) {
-  const { t } = useTranslation()
   const isUser = message.role === 'user'
   const isStreaming = message.status === 'streaming'
   const isError = message.status === 'error'
@@ -37,8 +36,33 @@ export function MessageBubble({ message }: MessageBubbleProps) {
         )}
 
         {/* Content */}
+        {isUser && message.attachments && message.attachments.length > 0 && (
+          <div className="mb-2 grid gap-2">
+            {message.attachments.map((attachment) => (
+              attachment.type === 'image' ? (
+                <img
+                  key={attachment.id}
+                  src={attachment.dataUrl}
+                  alt={attachment.name}
+                  className="max-h-56 max-w-full rounded-md object-contain"
+                />
+              ) : (
+                <div
+                  key={attachment.id}
+                  className="flex items-center gap-2 rounded-md bg-primary-foreground/10 px-2 py-1.5 text-xs"
+                >
+                  <FileText className="h-4 w-4 shrink-0" />
+                  <span className="truncate">{attachment.name}</span>
+                </div>
+              )
+            ))}
+          </div>
+        )}
+
         {isUser ? (
-          <p className="text-sm whitespace-pre-wrap break-words">{message.content}</p>
+          message.content ? (
+            <p className="text-sm whitespace-pre-wrap break-words">{message.content}</p>
+          ) : null
         ) : message.content ? (
           <MarkdownRenderer content={message.content} />
         ) : isStreaming ? (
